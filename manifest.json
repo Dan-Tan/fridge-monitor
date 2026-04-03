@@ -1,0 +1,21 @@
+{
+  "name": "Bushman Fridge Monitor",
+  "short_name": "Fridge",
+  "description": "Offline Bluetooth Dashboard for Bushman Fridge",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#121212",
+  "theme_color": "#2979ff",
+  "icons": [
+    {
+      "src": "https://via.placeholder.com/192/2979ff/ffffff?text=Fridge",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://via.placeholder.com/512/2979ff/ffffff?text=Fridge",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

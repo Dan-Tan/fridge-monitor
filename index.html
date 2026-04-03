@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Bushman Fridge Monitor</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#2979ff">
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #121212; color: white; padding: 20px; }
+        .card { background: #1e1e1e; border-radius: 15px; padding: 20px; margin: 10px auto; max-width: 400px; border: 1px solid #333; }
+        .val { font-size: 3em; font-weight: bold; color: #00e676; }
+        .label { font-size: 1.2em; color: #aaa; margin-bottom: 5px; }
+        .unit { font-size: 0.5em; color: #777; }
+        button { background: #2979ff; color: white; border: none; padding: 15px 30px; border-radius: 30px; font-size: 1.2em; cursor: pointer; margin: 20px; }
+        button:disabled { background: #444; }
+        .status { color: #ff9100; margin-top: 10px; }
+        .comp-on { color: #00e676; }
+        .comp-off { color: #ff5252; }
+    </style>
+</head>
+<body>
+    <h1>Fridge Monitor</h1>
+    <button id="connectBtn">Connect to Fridge</button>
+    <div id="status" class="status">Disconnected</div>
+
+    <div class="card">
+        <div class="label">House Battery</div>
+        <div class="val" id="batt">--<span class="unit">V</span></div>
+    </div>
+
+    <div class="card">
+        <div class="label">Fridge Temp</div>
+        <div class="val" id="frg">--<span class="unit">°C</span></div>
+    </div>
+
+    <div class="card">
+        <div class="label">Freezer Temp</div>
+        <div class="val" id="frz">--<span class="unit">°C</span></div>
+    </div>
+
+    <div class="card">
+        <div class="label">Compressor</div>
+        <div class="val" id="comp">--</div>
+    </div>
+
+    <script>
+        // Register Service Worker for Offline Use
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(reg => console.log('Offline support ready.'))
+                    .catch(err => console.log('SW registration failed:', err));
+            });
+        }
+
+        const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+        const TX_CHARACTERISTIC_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+
+        let device, characteristic;
+
+        document.getElementById('connectBtn').addEventListener('click', async () => {
+            try {
+                document.getElementById('status').innerText = "Searching...";
+                device = await navigator.bluetooth.requestDevice({
+                    filters: [{ name: 'Fridge Monitor' }],
+                    optionalServices: [SERVICE_UUID]
+                });
+
+                const server = await device.gatt.connect();
+                const service = await server.getPrimaryService(SERVICE_UUID);
+                characteristic = await service.getCharacteristic(TX_CHARACTERISTIC_UUID);
+
+                await characteristic.startNotifications();
+                characteristic.addEventListener('characteristicvaluechanged', handleData);
+
+                document.getElementById('status').innerText = "Connected";
+                document.getElementById('connectBtn').disabled = true;
+                
+                device.addEventListener('gattserverdisconnected', () => {
+                    document.getElementById('status').innerText = "Disconnected";
+                    document.getElementById('connectBtn').disabled = false;
+                });
+
+            } catch (error) {
+                console.log(error);
+                document.getElementById('status').innerText = "Error: " + error;
+            }
+        });
+
+        function handleData(event) {
+            const decoder = new TextDecoder('utf-8');
+            const data = decoder.decode(event.target.value);
+            console.log("Received:", data);
+
+            // Parse format: V:12.4 Frg:4C Frz:-18C Comp:ON
+            const battMatch = data.match(/V:([\d.]+)/);
+            const frgMatch = data.match(/Frg:(-?[\d.]+)/);
+            const frzMatch = data.match(/Frz:(-?[\d.]+)/);
+            const compMatch = data.match(/Comp:(ON|OFF)/);
+
+            if (battMatch) document.getElementById('batt').innerHTML = battMatch[1] + '<span class="unit">V</span>';
+            if (frgMatch) document.getElementById('frg').innerHTML = frgMatch[1] + '<span class="unit">°C</span>';
+            if (frzMatch) document.getElementById('frz').innerHTML = frzMatch[1] + '<span class="unit">°C</span>';
+            if (compMatch) {
+                const el = document.getElementById('comp');
+                el.innerText = compMatch[1];
+                el.className = 'val ' + (compMatch[1] === 'ON' ? 'comp-on' : 'comp-off');
+            }
+        }
+    </script>
+</body>
+</html>
