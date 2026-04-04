@@ -103,6 +103,9 @@ void setup() {
     Serial.println("BLE Active. Waiting for connection...");
 }
 
+// Thresholds
+const int LDR_THRESHOLD = 1000; // Adjust based on ambient light in the fridge
+
 void loop() {
     // 1. Connection Management
     if (!deviceConnected && oldDeviceConnected) {
@@ -121,7 +124,7 @@ void loop() {
     float fridgeTemp = readCelsius(PIN_FRIDGE_TEMP);
     float freezerTemp = readCelsius(PIN_FREEZER_TEMP);
     bool isCompressorRunning = (compVoltage < 2.5);
-    bool isDoorOpen = (analogRead(PIN_LDR) < 1000);
+    bool isDoorOpen = (analogRead(PIN_LDR) > LDR_THRESHOLD); // Light = Open, Dark = Closed
 
     // 3. Logic
     if (isCompressorRunning && !isDoorOpen) {
@@ -131,7 +134,13 @@ void loop() {
     }
 
     // 4. Construct Data String
-    String output = "V:" + String(batteryVoltage, 1) + " Frg:" + String(fridgeTemp, 0) + "C Frz:" + String(freezerTemp, 0) + "C Comp:" + (isCompressorRunning ? "ON" : "OFF") + "\n";
+    int ldrRaw = analogRead(PIN_LDR);
+    String output = "V:" + String(batteryVoltage, 1) + 
+                   " Frg:" + String(fridgeTemp, 0) + 
+                   "C Frz:" + String(freezerTemp, 0) + 
+                   "C Comp:" + (isCompressorRunning ? "ON" : "OFF") + 
+                   " Door:" + (isDoorOpen ? "OPEN" : "CLOSED") +
+                   " LDR:" + String(ldrRaw) + "\n";
 
     // 5. Output
     Serial.print(output);
