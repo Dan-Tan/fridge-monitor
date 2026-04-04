@@ -15,23 +15,24 @@
 
 // Pin Definitions
 const int PIN_FRIDGE_VOLT = 5;
-const int PIN_COMPRESSOR_STAT = 4;
+const int PIN_COMPRESSOR_STAT = 19;
 const int PIN_FREEZER_TEMP = 6;
-const int PIN_FRIDGE_TEMP = 7;
-const int PIN_LDR = 16;
-const int PIN_FAN_ON = 17;
+const int PIN_FRIDGE_TEMP = 4;
+const int PIN_LDR = 17;
+const int PIN_FAN_ON = 20;
 
 // Calibration
 const float V_REF = 3.3;
 const float ADC_MAX = 4095.0; 
 const float BATT_MULTIPLIER = (V_REF / ADC_MAX) * ((20000.0 + 4700.0) / 4700.0);
-const float COMP_MULTIPLIER = (V_REF / ADC_MAX) * ((10000.0 + 10000.0) / 10000.0);
+// Compressor is now Digital, multiplier removed
 
 // Thermistor Constants (NTC 3950)
 const float SERIES_RESISTOR = 10000.0;
 const float NOMINAL_RESISTANCE = 10000.0;
 const float NOMINAL_TEMPERATURE = 25.0;
 const float B_COEFFICIENT = 3950.0;
+
 
 // BLE Setup
 BLEServer *pServer = NULL;
@@ -43,6 +44,9 @@ bool oldDeviceConnected = false;
 #define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 #define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
+// Global State
+bool forceFanOn = false;
+
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
         deviceConnected = true;
@@ -51,6 +55,21 @@ class MyServerCallbacks: public BLEServerCallbacks {
     void onDisconnect(BLEServer* pServer) {
         deviceConnected = false;
         Serial.println(">>> App Disconnected");
+    }
+};
+
+class MyCharacteristicCallbacks: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic) {
+        String value = String(pCharacteristic->getValue().c_str());
+        Serial.print(">>> Received Command: "); Serial.println(value);
+
+        if (value.indexOf("FAN:ON") >= 0) {
+            forceFanOn = true;
+            Serial.println("FAN OVERRIDE: ON");
+        } else if (value.indexOf("FAN:AUTO") >= 0) {
+            forceFanOn = false;
+            Serial.println("FAN OVERRIDE: AUTO (Sensor-based)");
+        }
     }
 };
 
@@ -70,27 +89,46 @@ void setup() {
 
     pinMode(PIN_FAN_ON, OUTPUT);
     digitalWrite(PIN_FAN_ON, LOW);
+    
+    // Set digital inputs
+    pinMode(PIN_COMPRESSOR_STAT, INPUT);
+    pinMode(PIN_LDR, INPUT);
+    
     analogReadResolution(12);
 
     // Initialize BLE
     BLEDevice::init("Fridge Monitor");
+    
+    // Configure BLE Security
+    BLEDevice::setEncryptionLevel(ESP_GATT_PERM_READ_ENC_MITM | ESP_GATT_PERM_WRITE_ENC_MITM);
+    BLESecurity *pSecurity = new BLESecurity();
+    pSecurity->setAuthenticationMode(ESP_LE_AUTH_BOND);
+    pSecurity->setCapability(ESP_IO_CAP_OUT);
+    pSecurity->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+
+    uint32_t passkey = 271828;
+    esp_ble_gap_set_security_param(ESP_BLE_SM_SET_STATIC_PASSKEY, &passkey, sizeof(uint32_t));
+
     pServer = BLEDevice::createServer();
     pServer->setCallbacks(new MyServerCallbacks());
 
     BLEService *pService = pServer->createService(SERVICE_UUID);
 
-    // TX Characteristic (ESP -> Phone)
+    // TX Characteristic (ESP -> Phone) - Require Encryption
     pTxCharacteristic = pService->createCharacteristic(
         CHARACTERISTIC_UUID_TX,
-        BLECharacteristic::PROPERTY_NOTIFY
+        BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ
     );
+    pTxCharacteristic->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM);
     pTxCharacteristic->addDescriptor(new BLE2902());
 
-    // RX Characteristic (Phone -> ESP) - Required for Serial Profile
+    // RX Characteristic (Phone -> ESP) - Require Encryption
     BLECharacteristic *pRxCharacteristic = pService->createCharacteristic(
         CHARACTERISTIC_UUID_RX,
         BLECharacteristic::PROPERTY_WRITE
     );
+    pRxCharacteristic->setAccessPermissions(ESP_GATT_PERM_WRITE_ENC_MITM);
+    pRxCharacteristic->setCallbacks(new MyCharacteristicCallbacks());
 
     pService->start();
 
@@ -102,9 +140,6 @@ void setup() {
     
     Serial.println("BLE Active. Waiting for connection...");
 }
-
-// Thresholds
-const int LDR_THRESHOLD = 1000; // Adjust based on ambient light in the fridge
 
 void loop() {
     // 1. Connection Management
@@ -120,27 +155,29 @@ void loop() {
 
     // 2. Sensory Inputs
     float batteryVoltage = analogRead(PIN_FRIDGE_VOLT) * BATT_MULTIPLIER;
-    float compVoltage = analogRead(PIN_COMPRESSOR_STAT) * COMP_MULTIPLIER;
     float fridgeTemp = readCelsius(PIN_FRIDGE_TEMP);
     float freezerTemp = readCelsius(PIN_FREEZER_TEMP);
-    bool isCompressorRunning = (compVoltage < 2.5);
-    bool isDoorOpen = (analogRead(PIN_LDR) > LDR_THRESHOLD); // Light = Open, Dark = Closed
+    
+    // Digital inputs: Low = Run/Dark, High = Off/Light
+    bool isCompressorRunning = (digitalRead(PIN_COMPRESSOR_STAT) == LOW); 
+    bool isDoorOpen = (digitalRead(PIN_LDR) == HIGH);
+
+    Serial.print("LDR State: "); Serial.println(isDoorOpen ? "HIGH (OPEN)" : "LOW (CLOSED)");
 
     // 3. Logic
-    if (isCompressorRunning && !isDoorOpen) {
+    if (forceFanOn || (isCompressorRunning && !isDoorOpen)) {
         digitalWrite(PIN_FAN_ON, HIGH);
     } else {
         digitalWrite(PIN_FAN_ON, LOW);
     }
 
     // 4. Construct Data String
-    int ldrRaw = analogRead(PIN_LDR);
     String output = "V:" + String(batteryVoltage, 1) + 
                    " Frg:" + String(fridgeTemp, 0) + 
                    "C Frz:" + String(freezerTemp, 0) + 
                    "C Comp:" + (isCompressorRunning ? "ON" : "OFF") + 
                    " Door:" + (isDoorOpen ? "OPEN" : "CLOSED") +
-                   " LDR:" + String(ldrRaw) + "\n";
+                   " Mode:" + (forceFanOn ? "FORCED" : "AUTO") + "\n";
 
     // 5. Output
     Serial.print(output);
