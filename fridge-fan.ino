@@ -25,14 +25,12 @@ const int PIN_FAN_ON = 20;
 const float V_REF = 3.3;
 const float ADC_MAX = 4095.0; 
 const float BATT_MULTIPLIER = (V_REF / ADC_MAX) * ((20000.0 + 4700.0) / 4700.0);
-// Compressor is now Digital, multiplier removed
 
 // Thermistor Constants (NTC 3950)
 const float SERIES_RESISTOR = 10000.0;
 const float NOMINAL_RESISTANCE = 10000.0;
 const float NOMINAL_TEMPERATURE = 25.0;
 const float B_COEFFICIENT = 3950.0;
-
 
 // BLE Setup
 BLEServer *pServer = NULL;
@@ -98,36 +96,23 @@ void setup() {
 
     // Initialize BLE
     BLEDevice::init("Fridge Monitor");
-    
-    // Configure BLE Security
-    BLEDevice::setEncryptionLevel(ESP_GATT_PERM_READ_ENC_MITM | ESP_GATT_PERM_WRITE_ENC_MITM);
-    BLESecurity *pSecurity = new BLESecurity();
-    pSecurity->setAuthenticationMode(ESP_LE_AUTH_BOND);
-    pSecurity->setCapability(ESP_IO_CAP_OUT);
-    pSecurity->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
-
-    uint32_t passkey = 271828;
-    esp_ble_gap_set_security_param(ESP_BLE_SM_SET_STATIC_PASSKEY, &passkey, sizeof(uint32_t));
-
     pServer = BLEDevice::createServer();
     pServer->setCallbacks(new MyServerCallbacks());
 
     BLEService *pService = pServer->createService(SERVICE_UUID);
 
-    // TX Characteristic (ESP -> Phone) - Require Encryption
+    // TX Characteristic (ESP -> Phone)
     pTxCharacteristic = pService->createCharacteristic(
         CHARACTERISTIC_UUID_TX,
-        BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ
+        BLECharacteristic::PROPERTY_NOTIFY
     );
-    pTxCharacteristic->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM);
     pTxCharacteristic->addDescriptor(new BLE2902());
 
-    // RX Characteristic (Phone -> ESP) - Require Encryption
+    // RX Characteristic (Phone -> ESP)
     BLECharacteristic *pRxCharacteristic = pService->createCharacteristic(
         CHARACTERISTIC_UUID_RX,
         BLECharacteristic::PROPERTY_WRITE
     );
-    pRxCharacteristic->setAccessPermissions(ESP_GATT_PERM_WRITE_ENC_MITM);
     pRxCharacteristic->setCallbacks(new MyCharacteristicCallbacks());
 
     pService->start();
